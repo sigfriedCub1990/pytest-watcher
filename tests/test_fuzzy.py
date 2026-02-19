@@ -1,12 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
-
-import pytest
 
 from pytest_watcher.fuzzy import find_test_files, fuzzy_filter, fuzzy_match
-
 
 # ---------------------------------------------------------------------------
 # fuzzy_match

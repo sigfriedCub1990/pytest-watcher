@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import os
 from typing import List, Optional, Sequence
-from unittest.mock import patch
-
-import pytest
 
 from pytest_watcher.picker import (
     KEY_BACKSPACE,
@@ -22,7 +19,6 @@ from pytest_watcher.picker import (
     run_picker,
     update_state,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -282,7 +278,7 @@ class TestRender:
         assert "second.py" in output
         # '❯' marker on the cursor row
         lines = output.split("\n")
-        cursor_lines = [l for l in lines if "❯" in l]
+        cursor_lines = [line for line in lines if "❯" in line]
         assert len(cursor_lines) == 1
         assert "second.py" in cursor_lines[0]
 

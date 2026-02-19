@@ -12,6 +12,7 @@ from pytest_watcher.fuzzy import find_test_files, fuzzy_filter, fuzzy_match
 # fuzzy_match
 # ---------------------------------------------------------------------------
 
+
 class TestFuzzyMatch:
     def test_exact_substring(self):
         matched, score = fuzzy_match("foo", "foobar")
@@ -54,6 +55,7 @@ class TestFuzzyMatch:
 # fuzzy_filter
 # ---------------------------------------------------------------------------
 
+
 class TestFuzzyFilter:
     CANDIDATES = [
         "tests/test_auth.py",
@@ -89,6 +91,7 @@ class TestFuzzyFilter:
 # find_test_files
 # ---------------------------------------------------------------------------
 
+
 class TestFindTestFiles:
     def test_discovers_test_files(self, tmp_path: Path):
         # Create a small directory tree
@@ -116,6 +119,7 @@ class TestFindTestFiles:
 # ---------------------------------------------------------------------------
 # Integration-style: filter real-ish candidates
 # ---------------------------------------------------------------------------
+
 
 class TestFuzzyFilterIntegration:
     """Simulate the workflow: discover → filter → pick."""

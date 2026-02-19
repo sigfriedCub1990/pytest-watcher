@@ -146,9 +146,7 @@ def render(state: PickerState) -> str:
     lines.append(f"{_BOLD}{_CYAN}Filter >{_RESET} {state.query}")
 
     # Match count
-    lines.append(
-        f"  {_CYAN}{len(state.results)}/{state.total} matches{_RESET}"
-    )
+    lines.append(f"  {_CYAN}{len(state.results)}/{state.total} matches{_RESET}")
 
     # Result rows
     visible = state.results[:MAX_VISIBLE_RESULTS]

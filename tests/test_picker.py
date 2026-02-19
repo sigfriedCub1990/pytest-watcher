@@ -266,9 +266,7 @@ class TestUpdateState:
 
 class TestRender:
     def test_shows_query(self):
-        state = PickerState(
-            query="foo", results=["a.py", "b.py"], total=5
-        )
+        state = PickerState(query="foo", results=["a.py", "b.py"], total=5)
         output = render(state)
         assert "foo" in output
 
@@ -278,9 +276,7 @@ class TestRender:
         assert "1/10" in output
 
     def test_highlights_cursor_row(self):
-        state = PickerState(
-            results=["first.py", "second.py"], total=2, cursor=1
-        )
+        state = PickerState(results=["first.py", "second.py"], total=2, cursor=1)
         output = render(state)
         # The highlighted row should contain the item
         assert "second.py" in output
@@ -301,8 +297,7 @@ class TestRender:
         output = render(state)
         # Should only show MAX_VISIBLE_RESULTS items
         visible_count = sum(
-            1 for line in output.split("\n")
-            if line.strip().startswith(("❯", "test_"))
+            1 for line in output.split("\n") if line.strip().startswith(("❯", "test_"))
         )
         assert visible_count <= MAX_VISIBLE_RESULTS
 
@@ -424,8 +419,14 @@ class TestRunPickerGappedReads:
 
     def test_two_downs_gapped_then_enter(self):
         tokens: list[Optional[str]] = [
-            "\x1b", None, "[", "B",  # ↓
-            "\x1b", "[", None, "B",  # ↓
+            "\x1b",
+            None,
+            "[",
+            "B",  # ↓
+            "\x1b",
+            "[",
+            None,
+            "B",  # ↓
             "\r",
         ]
         selected, _ = self._simulate_gapped(tokens)
@@ -433,8 +434,14 @@ class TestRunPickerGappedReads:
 
     def test_down_up_gapped_then_enter(self):
         tokens: list[Optional[str]] = [
-            "\x1b", None, "[", "B",  # ↓
-            "\x1b", None, "[", "A",  # ↑
+            "\x1b",
+            None,
+            "[",
+            "B",  # ↓
+            "\x1b",
+            None,
+            "[",
+            "A",  # ↑
             "\r",
         ]
         selected, _ = self._simulate_gapped(tokens)
@@ -442,8 +449,15 @@ class TestRunPickerGappedReads:
 
     def test_application_mode_arrows_gapped(self):
         tokens: list[Optional[str]] = [
-            "\x1b", None, "O", None, "B",  # ↓ (app mode)
-            "\x1b", None, "O", "B",        # ↓ (app mode)
+            "\x1b",
+            None,
+            "O",
+            None,
+            "B",  # ↓ (app mode)
+            "\x1b",
+            None,
+            "O",
+            "B",  # ↓ (app mode)
             "\r",
         ]
         selected, _ = self._simulate_gapped(tokens)
@@ -452,8 +466,12 @@ class TestRunPickerGappedReads:
     def test_type_then_gapped_arrow_then_enter(self):
         """Type a query to filter, then navigate with gapped arrows."""
         tokens: list[Optional[str]] = [
-            "c",                             # filter to cache + commands
-            "\x1b", None, "[", None, "B",    # ↓
+            "c",  # filter to cache + commands
+            "\x1b",
+            None,
+            "[",
+            None,
+            "B",  # ↓
             "\r",
         ]
         selected, _ = self._simulate_gapped(tokens)

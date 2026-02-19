@@ -53,9 +53,7 @@ class TestFuzzyFilterCommand:
         (tmp_path / "test_foo.py").write_text("")
         (tmp_path / "test_bar.py").write_text("")
 
-        with patch(
-            "pytest_watcher.picker.run_picker", return_value="test_foo.py"
-        ):
+        with patch("pytest_watcher.picker.run_picker", return_value="test_foo.py"):
             command.run(trigger, mock_terminal, config)
 
         assert "test_foo.py" in config.runner_args
@@ -69,9 +67,7 @@ class TestFuzzyFilterCommand:
     ):
         (tmp_path / "test_foo.py").write_text("")
 
-        with patch(
-            "pytest_watcher.picker.run_picker", return_value=None
-        ):
+        with patch("pytest_watcher.picker.run_picker", return_value=None):
             command.run(trigger, mock_terminal, config)
 
         assert not trigger.is_active()
@@ -86,9 +82,7 @@ class TestFuzzyFilterCommand:
 
         config.runner_args = ["-v", "test_old.py"]
 
-        with patch(
-            "pytest_watcher.picker.run_picker", return_value="test_alpha.py"
-        ):
+        with patch("pytest_watcher.picker.run_picker", return_value="test_alpha.py"):
             command.run(trigger, mock_terminal, config)
 
         assert config.runner_args == ["-v", "test_alpha.py"]
@@ -102,9 +96,7 @@ class TestFuzzyFilterCommand:
     ):
         (tmp_path / "test_one.py").write_text("")
 
-        with patch(
-            "pytest_watcher.picker.run_picker", return_value="test_one.py"
-        ):
+        with patch("pytest_watcher.picker.run_picker", return_value="test_one.py"):
             command.run(trigger, mock_terminal, config)
 
         # clear() should be called at least twice (before picker, after picker)

@@ -214,6 +214,26 @@ def update_state(
         return
 
 
+def make_raw_reader(fd: int) -> Callable[[], Optional[str]]:
+    """Create a single-byte reader that operates directly on a file descriptor.
+
+    Unlike ``sys.stdin.read(1)``, this uses ``os.read(fd, 1)`` so that
+    ``select()`` and reads share the same OS-level buffer.  This prevents
+    Python's ``BufferedReader`` from eagerly consuming bytes and hiding
+    them from ``select()``, which caused arrow-key escape sequences to be
+    misinterpreted as bare Escape.
+    """
+
+    def read_char() -> Optional[str]:
+        if select.select([fd], [], [], 0.05)[0]:
+            data = os.read(fd, 1)
+            if data:
+                return data.decode("utf-8", errors="replace")
+        return None
+
+    return read_char
+
+
 def run_picker(
     candidates: Sequence[str],
     filter_fn: Callable[[str, Sequence[str]], List[str]],
@@ -234,11 +254,7 @@ def run_picker(
             sys.stdout.flush()
 
     if _read_char is None:
-
-        def _read_char() -> Optional[str]:
-            if select.select([sys.stdin], [], [], 0.05)[0]:
-                return sys.stdin.read(1)
-            return None
+        _read_char = make_raw_reader(sys.stdin.fileno())
 
     state = PickerState(
         results=list(candidates),

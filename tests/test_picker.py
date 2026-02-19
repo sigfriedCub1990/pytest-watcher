@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from typing import List, Optional, Sequence
+from unittest.mock import patch
 
 import pytest
 
@@ -15,6 +17,7 @@ from pytest_watcher.picker import (
     KeyEvent,
     PickerState,
     _read_key_event,
+    make_raw_reader,
     render,
     run_picker,
     update_state,
@@ -457,3 +460,92 @@ class TestRunPickerGappedReads:
         # "c" matches cache and commands; ↓ selects the second match
         assert selected is not None
         assert selected != CANDIDATES[0]  # not the first overall candidate
+
+
+# ---------------------------------------------------------------------------
+# make_raw_reader — verifying the unbuffered fd reader
+# ---------------------------------------------------------------------------
+
+
+class TestMakeRawReader:
+    """Verify that ``make_raw_reader`` uses ``os.read`` on the raw fd
+    so that ``select()`` and reads operate on the same OS-level buffer.
+    """
+
+    def test_reads_single_byte_via_os_read(self):
+        r_fd, w_fd = os.pipe()
+        try:
+            os.write(w_fd, b"x")
+            reader = make_raw_reader(r_fd)
+            assert reader() == "x"
+        finally:
+            os.close(r_fd)
+            os.close(w_fd)
+
+    def test_returns_none_when_no_data(self):
+        r_fd, w_fd = os.pipe()
+        try:
+            reader = make_raw_reader(r_fd)
+            assert reader() is None
+        finally:
+            os.close(r_fd)
+            os.close(w_fd)
+
+    def test_reads_escape_sequence_byte_by_byte(self):
+        """All 3 bytes of an arrow sequence must be individually readable."""
+        r_fd, w_fd = os.pipe()
+        try:
+            os.write(w_fd, b"\x1b[B")
+            reader = make_raw_reader(r_fd)
+            assert reader() == "\x1b"
+            assert reader() == "["
+            assert reader() == "B"
+            assert reader() is None
+        finally:
+            os.close(r_fd)
+            os.close(w_fd)
+
+    def test_arrow_key_parsed_correctly_via_raw_reader(self):
+        """End-to-end: raw reader → _read_key_event → correct arrow event."""
+        r_fd, w_fd = os.pipe()
+        try:
+            os.write(w_fd, b"\x1b[A")
+            reader = make_raw_reader(r_fd)
+            ev = _read_key_event(reader)
+            assert ev == KeyEvent(KEY_UP)
+        finally:
+            os.close(r_fd)
+            os.close(w_fd)
+
+    def test_multiple_arrow_keys_via_raw_reader(self):
+        """Two arrow sequences written at once are parsed individually."""
+        r_fd, w_fd = os.pipe()
+        try:
+            os.write(w_fd, b"\x1b[B\x1b[A")  # ↓ then ↑
+            reader = make_raw_reader(r_fd)
+            ev1 = _read_key_event(reader)
+            ev2 = _read_key_event(reader)
+            assert ev1 == KeyEvent(KEY_DOWN)
+            assert ev2 == KeyEvent(KEY_UP)
+        finally:
+            os.close(r_fd)
+            os.close(w_fd)
+
+    def test_run_picker_with_raw_reader_on_pipe(self):
+        """Full picker run using a raw reader on a real fd (pipe)."""
+        r_fd, w_fd = os.pipe()
+        try:
+            # Write: ↓ ↓ Enter
+            os.write(w_fd, b"\x1b[B\x1b[B\r")
+            output_buf: list[str] = []
+            reader = make_raw_reader(r_fd)
+            selected = run_picker(
+                CANDIDATES,
+                _identity_filter,
+                _read_char=reader,
+                _write=lambda s: output_buf.append(s),
+            )
+            assert selected == CANDIDATES[2]
+        finally:
+            os.close(r_fd)
+            os.close(w_fd)

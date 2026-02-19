@@ -165,6 +165,41 @@ class EraseScreenCommand(Command):
         term.print_short_menu(config.runner_args)
 
 
+class FuzzyFilterCommand(Command):
+    character = "t"
+    caption = "t"
+    description = "filter test files (fuzzy search)"
+
+    def run(self, trigger: Trigger, term: Terminal, config: Config) -> None:
+        from .fuzzy import find_test_files, fuzzy_filter
+        from .picker import run_picker
+
+        test_files = find_test_files(config.path)
+
+        if not test_files:
+            sys.stdout.write("\nNo test files found\n")
+            sys.stdout.flush()
+            term.print_short_menu(config.runner_args)
+            return
+
+        term.clear()
+        selected = run_picker(test_files, fuzzy_filter)
+
+        term.clear()
+
+        if selected is None:
+            logger.info("Fuzzy filter cancelled")
+            term.print_short_menu(config.runner_args)
+            return
+
+        # Replace runner args with the selected file, preserving any flags
+        flags = [a for a in config.runner_args if a.startswith("-")]
+        config.runner_args.clear()
+        config.runner_args.extend(flags + [selected])
+
+        trigger.emit_now()
+
+
 class QuitCommand(Command):
     character = "q"
     caption = "q"

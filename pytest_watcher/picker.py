@@ -69,24 +69,58 @@ class KeyEvent:
     char: str = ""
 
 
+_ESC_READ_RETRIES = 4  # max None returns to tolerate inside an escape sequence
+
+
+def _read_continuation(
+    read_char: Callable[[], Optional[str]],
+) -> Optional[str]:
+    """Read the next real character, skipping up to *_ESC_READ_RETRIES* ``None``
+    returns.
+
+    In a real terminal the default ``read_char`` uses ``select()`` on the
+    OS file descriptor, but Python's ``BufferedReader`` may have already
+    pulled the continuation bytes into its internal buffer.  ``select()``
+    then reports *no data* even though the bytes are available — so
+    ``read_char()`` returns ``None``.  Retrying a few times fixes this.
+    """
+    for _ in range(_ESC_READ_RETRIES):
+        ch = read_char()
+        if ch is not None:
+            return ch
+    return None
+
+
+def _parse_arrow(direction: Optional[str]) -> Optional[KeyEvent]:
+    if direction == "A":
+        return KeyEvent(KEY_UP)
+    if direction == "B":
+        return KeyEvent(KEY_DOWN)
+    return None
+
+
 def _read_key_event(read_char: Callable[[], Optional[str]]) -> Optional[KeyEvent]:
     """Read one logical key event using *read_char* (a single-char reader).
 
-    Handles multi-byte escape sequences for arrow keys.
+    Handles multi-byte escape sequences for arrow keys in both normal
+    mode (``ESC [ A/B``) and application mode (``ESC O A/B``).
+    Tolerates ``None`` gaps between bytes (see :func:`_read_continuation`).
     """
     ch = read_char()
     if ch is None:
         return None
 
     if ch == "\x1b":  # ESC – might be an arrow-key sequence
-        seq1 = read_char()
-        if seq1 == "[":
-            seq2 = read_char()
-            if seq2 == "A":
-                return KeyEvent(KEY_UP)
-            if seq2 == "B":
-                return KeyEvent(KEY_DOWN)
-        # Bare escape (or unrecognised sequence) → cancel
+        seq1 = _read_continuation(read_char)
+        if seq1 in ("[", "O"):
+            seq2 = _read_continuation(read_char)
+            arrow = _parse_arrow(seq2)
+            if arrow is not None:
+                return arrow
+        if seq1 is None:
+            # No follow-up byte at all → genuine Escape press
+            return KeyEvent(KEY_ESCAPE)
+        # Unrecognised sequence → treat as Escape
         return KeyEvent(KEY_ESCAPE)
 
     if ch in ("\n", "\r"):

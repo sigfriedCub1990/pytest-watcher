@@ -51,6 +51,24 @@ def _make_char_reader(chars: str):
     return read_char
 
 
+def _make_gapped_reader(tokens: Sequence[Optional[str]]):
+    """Return a reader that yields from *tokens*, where ``None`` simulates
+    a ``select()`` timeout (no data available).
+
+    This reproduces what happens in a real terminal when Python's
+    ``BufferedReader`` eagerly consumes bytes from the fd, causing
+    subsequent ``select()`` calls to report no data even though
+    continuation bytes of an escape sequence are already in Python's
+    internal buffer.
+    """
+    it = iter(tokens)
+
+    def read_char() -> Optional[str]:
+        return next(it, None)
+
+    return read_char
+
+
 # ---------------------------------------------------------------------------
 # _read_key_event
 # ---------------------------------------------------------------------------
@@ -99,6 +117,46 @@ class TestReadKeyEvent:
     def test_none_when_no_input(self):
         ev = _read_key_event(lambda: None)
         assert ev is None
+
+    def test_arrow_down_with_none_after_esc(self):
+        """select() may timeout between ESC and '[' due to Python buffering."""
+        reader = _make_gapped_reader(["\x1b", None, "[", "B"])
+        ev = _read_key_event(reader)
+        assert ev == KeyEvent(KEY_DOWN)
+
+    def test_arrow_up_with_none_after_esc(self):
+        reader = _make_gapped_reader(["\x1b", None, "[", "A"])
+        ev = _read_key_event(reader)
+        assert ev == KeyEvent(KEY_UP)
+
+    def test_arrow_down_with_none_after_bracket(self):
+        """select() may timeout between '[' and direction byte."""
+        reader = _make_gapped_reader(["\x1b", "[", None, "B"])
+        ev = _read_key_event(reader)
+        assert ev == KeyEvent(KEY_DOWN)
+
+    def test_arrow_up_with_nones_throughout(self):
+        """Multiple select() timeouts within a single escape sequence."""
+        reader = _make_gapped_reader(["\x1b", None, None, "[", None, "A"])
+        ev = _read_key_event(reader)
+        assert ev == KeyEvent(KEY_UP)
+
+    def test_arrow_down_application_mode(self):
+        """Some terminals send ESC O B instead of ESC [ B."""
+        reader = _make_char_reader("\x1bOB")
+        ev = _read_key_event(reader)
+        assert ev == KeyEvent(KEY_DOWN)
+
+    def test_arrow_up_application_mode(self):
+        """Some terminals send ESC O A instead of ESC [ A."""
+        reader = _make_char_reader("\x1bOA")
+        ev = _read_key_event(reader)
+        assert ev == KeyEvent(KEY_UP)
+
+    def test_arrow_application_mode_with_none_gaps(self):
+        reader = _make_gapped_reader(["\x1b", None, "O", None, "A"])
+        ev = _read_key_event(reader)
+        assert ev == KeyEvent(KEY_UP)
 
 
 # ---------------------------------------------------------------------------
@@ -325,3 +383,77 @@ class TestRunPicker:
         ups = "\x1b[A" * 5
         selected, _ = self._simulate(f"{ups}\r")
         assert selected == CANDIDATES[0]
+
+
+# ---------------------------------------------------------------------------
+# run_picker — real-terminal simulation (gapped reads)
+# ---------------------------------------------------------------------------
+
+
+class TestRunPickerGappedReads:
+    """Simulate the real terminal where select() can timeout between bytes
+    of an escape sequence due to Python's BufferedReader consuming from
+    the fd eagerly.
+    """
+
+    def _simulate_gapped(
+        self, tokens: Sequence[Optional[str]]
+    ) -> tuple[Optional[str], str]:
+        output_buf: list[str] = []
+
+        def write(s: str) -> None:
+            output_buf.append(s)
+
+        reader = _make_gapped_reader(tokens)
+        selected = run_picker(
+            CANDIDATES,
+            _identity_filter,
+            _read_char=reader,
+            _write=write,
+        )
+        return selected, "".join(output_buf)
+
+    def test_arrow_down_gapped_then_enter(self):
+        """Down arrow with None gaps, then Enter — must select second item."""
+        tokens: list[Optional[str]] = ["\x1b", None, "[", None, "B", "\r"]
+        selected, _ = self._simulate_gapped(tokens)
+        assert selected == CANDIDATES[1]
+
+    def test_two_downs_gapped_then_enter(self):
+        tokens: list[Optional[str]] = [
+            "\x1b", None, "[", "B",  # ↓
+            "\x1b", "[", None, "B",  # ↓
+            "\r",
+        ]
+        selected, _ = self._simulate_gapped(tokens)
+        assert selected == CANDIDATES[2]
+
+    def test_down_up_gapped_then_enter(self):
+        tokens: list[Optional[str]] = [
+            "\x1b", None, "[", "B",  # ↓
+            "\x1b", None, "[", "A",  # ↑
+            "\r",
+        ]
+        selected, _ = self._simulate_gapped(tokens)
+        assert selected == CANDIDATES[0]
+
+    def test_application_mode_arrows_gapped(self):
+        tokens: list[Optional[str]] = [
+            "\x1b", None, "O", None, "B",  # ↓ (app mode)
+            "\x1b", None, "O", "B",        # ↓ (app mode)
+            "\r",
+        ]
+        selected, _ = self._simulate_gapped(tokens)
+        assert selected == CANDIDATES[2]
+
+    def test_type_then_gapped_arrow_then_enter(self):
+        """Type a query to filter, then navigate with gapped arrows."""
+        tokens: list[Optional[str]] = [
+            "c",                             # filter to cache + commands
+            "\x1b", None, "[", None, "B",    # ↓
+            "\r",
+        ]
+        selected, _ = self._simulate_gapped(tokens)
+        # "c" matches cache and commands; ↓ selects the second match
+        assert selected is not None
+        assert selected != CANDIDATES[0]  # not the first overall candidate

@@ -24,6 +24,12 @@ import sys
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Sequence
 
+try:
+    import termios
+    import tty
+except ImportError:
+    pass
+
 logger = logging.getLogger(__name__)
 
 # ANSI helpers
@@ -251,6 +257,8 @@ def run_picker(
             sys.stdout.write(s)
             sys.stdout.flush()
 
+    manage_terminal = _read_char is None
+
     if _read_char is None:
         _read_char = make_raw_reader(sys.stdin.fileno())
 
@@ -258,6 +266,16 @@ def run_picker(
         results=list(candidates),
         total=len(candidates),
     )
+
+    # Switch to raw mode to suppress character echo during interactive input.
+    # cbreak mode (used by the watcher) leaves echo enabled, which causes
+    # typed characters to appear at the cursor position before the picker
+    # redraws the frame — leading to duplicated first letters on screen.
+    old_attrs = None
+    if manage_terminal:
+        fd = sys.stdin.fileno()
+        old_attrs = termios.tcgetattr(fd)
+        tty.setraw(fd)
 
     _write(_HIDE_CURSOR)
     prev_lines = 0
@@ -285,5 +303,8 @@ def run_picker(
         _write(_SHOW_CURSOR)
         # Move below the rendered frame so the next output starts clean
         _write("\n")
+        # Restore the previous terminal mode
+        if old_attrs is not None:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
 
     return state.selected

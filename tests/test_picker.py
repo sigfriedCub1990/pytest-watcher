@@ -277,7 +277,7 @@ class TestRender:
         # The highlighted row should contain the item
         assert "second.py" in output
         # '❯' marker on the cursor row
-        lines = output.split("\n")
+        lines = output.splitlines()
         cursor_lines = [line for line in lines if "❯" in line]
         assert len(cursor_lines) == 1
         assert "second.py" in cursor_lines[0]
@@ -293,7 +293,7 @@ class TestRender:
         output = render(state)
         # Should only show MAX_VISIBLE_RESULTS items
         visible_count = sum(
-            1 for line in output.split("\n") if line.strip().startswith(("❯", "test_"))
+            1 for line in output.splitlines() if line.strip().startswith(("❯", "test_"))
         )
         assert visible_count <= MAX_VISIBLE_RESULTS
 

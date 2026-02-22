@@ -165,11 +165,11 @@ def render(state: PickerState) -> str:
     if not visible:
         lines.append(f"  {_CYAN}(no matches){_RESET}")
 
-    return "\n".join(lines)
+    return "\r\n".join(lines)
 
 
 def _printed_line_count(text: str) -> int:
-    return text.count("\n") + 1
+    return len(text.splitlines())
 
 
 # -- Core loop ---------------------------------------------------------------
@@ -287,7 +287,7 @@ def run_picker(
                 _write(_CURSOR_UP * (prev_lines - 1))
                 _write("\r")
                 for _ in range(prev_lines):
-                    _write(f"{_CLEAR_LINE}\n")
+                    _write(f"{_CLEAR_LINE}\r\n")
                 _write(_CURSOR_UP * prev_lines)
                 _write("\r")
 
@@ -302,7 +302,7 @@ def run_picker(
     finally:
         _write(_SHOW_CURSOR)
         # Move below the rendered frame so the next output starts clean
-        _write("\n")
+        _write("\r\n")
         # Restore the previous terminal mode
         if old_attrs is not None:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)

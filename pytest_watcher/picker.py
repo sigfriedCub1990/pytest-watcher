@@ -20,9 +20,10 @@ from __future__ import annotations
 import logging
 import os
 import select
+import shutil
 import sys
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence, Tuple
 
 try:
     import termios
@@ -57,6 +58,7 @@ class PickerState:
     total: int = 0  # total candidates before filtering
     done: bool = False
     selected: Optional[str] = None  # the accepted result (None = cancelled)
+    max_visible: int = MAX_VISIBLE_RESULTS  # result rows that fit the terminal
 
 
 # -- Key constants -----------------------------------------------------------
@@ -144,26 +146,51 @@ def _read_key_event(read_char: Callable[[], Optional[str]]) -> Optional[KeyEvent
 # -- Rendering ---------------------------------------------------------------
 
 
-def render(state: PickerState) -> str:
-    """Return the full screen content for the current state."""
-    lines: List[str] = []
+def _truncate(text: str, width: int) -> str:
+    """Clip *text* to *width* visible columns, marking the cut with an ellipsis."""
+    if len(text) <= width:
+        return text
+    return text[: max(0, width - 1)] + "…"
 
-    # Header: query line
-    lines.append(f"{_BOLD}{_CYAN}Filter >{_RESET} {state.query}")
+
+def render(state: PickerState, width: int = 80) -> str:
+    """Return the full screen content for the current state.
+
+    Every line is clipped to ``width - 1`` visible columns so it never wraps:
+    the erase loop in :func:`run_picker` counts logical lines, and a wrapped
+    line would occupy more physical rows than counted, leaving stale frames
+    on screen.
+    """
+    lines: List[str] = []
+    max_cols = max(1, width - 1)
+
+    # Header: query line.  Keep the tail of an over-long query so the user
+    # always sees what they are typing.
+    query = state.query
+    query_budget = max(0, max_cols - len("Filter > "))
+    if len(query) > query_budget:
+        if query_budget > 0:
+            query = "…" + query[len(query) - query_budget + 1 :]
+        else:
+            query = ""
+    lines.append(f"{_BOLD}{_CYAN}Filter >{_RESET} {query}")
 
     # Match count
-    lines.append(f"  {_CYAN}{len(state.results)}/{state.total} matches{_RESET}")
+    counts = _truncate(f"  {len(state.results)}/{state.total} matches", max_cols)
+    lines.append(f"{_CYAN}{counts}{_RESET}")
 
     # Result rows
-    visible = state.results[:MAX_VISIBLE_RESULTS]
+    visible = state.results[: state.max_visible]
+    item_budget = max_cols - 4  # 4-column prefix: "  ❯ " / "    "
     for i, item in enumerate(visible):
+        item = _truncate(item, max(1, item_budget))
         if i == state.cursor:
             lines.append(f"  {_REVERSE}{_BOLD}❯ {item}{_RESET}")
         else:
             lines.append(f"    {item}")
 
     if not visible:
-        lines.append(f"  {_CYAN}(no matches){_RESET}")
+        lines.append(f"{_CYAN}{_truncate('  (no matches)', max_cols)}{_RESET}")
 
     return "\r\n".join(lines)
 
@@ -207,7 +234,7 @@ def update_state(
         return
 
     if event.kind == KEY_DOWN:
-        limit = min(len(state.results), MAX_VISIBLE_RESULTS) - 1
+        limit = min(len(state.results), state.max_visible) - 1
         state.cursor = min(limit, state.cursor + 1)
         return
 
@@ -238,19 +265,29 @@ def make_raw_reader(fd: int) -> Callable[[], Optional[str]]:
     return read_char
 
 
+def _terminal_size() -> Tuple[int, int]:
+    """Return the terminal size as ``(columns, lines)``."""
+    size = shutil.get_terminal_size(fallback=(80, 24))
+    return size.columns, size.lines
+
+
 def run_picker(
     candidates: Sequence[str],
     filter_fn: Callable[[str, Sequence[str]], List[str]],
     *,
     _read_char: Optional[Callable[[], Optional[str]]] = None,
     _write: Optional[Callable[[str], None]] = None,
+    _get_size: Optional[Callable[[], Tuple[int, int]]] = None,
 ) -> Optional[str]:
     """Run the interactive picker and return the selected path, or ``None``.
 
-    *_read_char* and *_write* are injectable for testing; when ``None`` they
-    default to reading from ``sys.stdin`` (in cbreak mode) and writing to
-    ``sys.stdout``.
+    *_read_char*, *_write* and *_get_size* are injectable for testing; when
+    ``None`` they default to reading from ``sys.stdin`` (in cbreak mode),
+    writing to ``sys.stdout`` and querying the real terminal size.
     """
+    if _get_size is None:
+        _get_size = _terminal_size
+
     if _write is None:
 
         def _write(s: str) -> None:
@@ -291,7 +328,12 @@ def run_picker(
                 _write(_CURSOR_UP * prev_lines)
                 _write("\r")
 
-            frame = render(state)
+            cols, rows = _get_size()
+            # 2 header lines + 1 spare row so a full frame never scrolls
+            state.max_visible = max(1, min(MAX_VISIBLE_RESULTS, rows - 3))
+            state.cursor = min(state.cursor, state.max_visible - 1)
+
+            frame = render(state, width=cols)
             _write(frame)
             prev_lines = _printed_line_count(frame)
 

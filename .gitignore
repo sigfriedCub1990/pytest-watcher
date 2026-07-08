@@ -142,3 +142,6 @@ vale_styles
 
 # tmp dir
 tests/tmp
+
+# codegraph
+.codegraph/

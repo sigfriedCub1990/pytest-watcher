@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import List, Optional, Sequence
 
 from pytest_watcher.picker import (
@@ -31,6 +32,14 @@ CANDIDATES = [
     "tests/unit/test_models.py",
     "tests/unit/test_views.py",
 ]
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def _visible(text: str) -> str:
+    """Strip ANSI escape sequences, leaving only visible characters."""
+    return _ANSI_RE.sub("", text)
 
 
 def _identity_filter(query: str, candidates: Sequence[str]) -> List[str]:
@@ -254,6 +263,13 @@ class TestUpdateState:
         update_state(state, KeyEvent(KEY_BACKSPACE), _identity_filter, CANDIDATES)
         assert state.cursor == 0
 
+    def test_cursor_down_clamps_to_max_visible(self):
+        state = self._new_state()
+        state.max_visible = 3
+        for _ in range(50):
+            update_state(state, KeyEvent(KEY_DOWN), _identity_filter, CANDIDATES)
+        assert state.cursor == 2
+
 
 # ---------------------------------------------------------------------------
 # render
@@ -296,6 +312,48 @@ class TestRender:
             1 for line in output.splitlines() if line.strip().startswith(("❯", "test_"))
         )
         assert visible_count <= MAX_VISIBLE_RESULTS
+
+    def test_respects_max_visible(self):
+        many = [f"test_{i}.py" for i in range(30)]
+        state = PickerState(results=many, total=30, max_visible=5)
+        output = _visible(render(state))
+        visible_count = sum(
+            1 for line in output.splitlines() if line.strip().startswith(("❯", "test_"))
+        )
+        assert visible_count == 5
+
+    def test_truncates_lines_to_width(self):
+        long_paths = [
+            f"tests/integration/handlers/test_very_long_name_{i}.py" for i in range(3)
+        ]
+        state = PickerState(results=long_paths, total=3)
+        output = render(state, width=40)
+        for line in output.splitlines():
+            assert len(_visible(line)) <= 39
+        # Truncated rows are marked with an ellipsis
+        assert "…" in output
+
+    def test_short_lines_not_truncated(self):
+        state = PickerState(results=["a.py", "b.py"], total=2)
+        output = render(state, width=40)
+        assert "…" not in output
+        assert "a.py" in output
+
+    def test_long_query_shows_tail(self):
+        query = "x" * 60 + "TAIL"
+        state = PickerState(query=query, results=[], total=0)
+        output = render(state, width=40)
+        first_line = output.splitlines()[0]
+        assert "TAIL" in first_line
+        assert len(_visible(first_line)) <= 39
+
+    def test_cursor_row_highlighted_after_truncation(self):
+        long_paths = ["tests/integration/handlers/test_very_long_name.py"]
+        state = PickerState(results=long_paths, total=1, cursor=0)
+        output = render(state, width=30)
+        cursor_lines = [line for line in output.splitlines() if "❯" in line]
+        assert len(cursor_lines) == 1
+        assert len(_visible(cursor_lines[0])) <= 29
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +435,60 @@ class TestRunPicker:
         ups = "\x1b[A" * 5
         selected, _ = self._simulate(f"{ups}\r")
         assert selected == CANDIDATES[0]
+
+
+# ---------------------------------------------------------------------------
+# run_picker — small terminal
+# ---------------------------------------------------------------------------
+
+
+class TestRunPickerSmallTerminal:
+    LONG_CANDIDATES = [
+        f"centrosmo/test/integration/message_handlers/test_publish_event_{i}.py"
+        for i in range(20)
+    ]
+
+    def _simulate(self, keys: str, size: tuple[int, int]) -> tuple[Optional[str], str]:
+        output_buf: list[str] = []
+
+        def write(s: str) -> None:
+            output_buf.append(s)
+
+        selected = run_picker(
+            self.LONG_CANDIDATES,
+            _identity_filter,
+            _read_char=_make_char_reader(keys),
+            _write=write,
+            _get_size=lambda: size,
+        )
+        return selected, "".join(output_buf)
+
+    def test_no_line_exceeds_terminal_width(self):
+        _, output = self._simulate("\r", size=(40, 8))
+        for line in _visible(output).splitlines():
+            assert len(line) <= 39
+
+    def test_rows_clamped_to_terminal_height(self):
+        _, output = self._simulate("\r", size=(40, 8))
+        # 8 rows - 2 headers - 1 spare = 5 result rows max
+        result_rows = [
+            line
+            for line in _visible(output).splitlines()
+            if "centrosmo" in line or "…" in line and "Filter" not in line
+        ]
+        # A single frame is drawn before Enter
+        assert 0 < len(result_rows) <= 5
+
+    def test_cursor_clamped_to_visible_rows(self):
+        # 8-row terminal shows 5 rows; pressing down 10 times must select row 4
+        downs = "\x1b[B" * 10
+        selected, _ = self._simulate(f"{downs}\r", size=(40, 8))
+        assert selected == self.LONG_CANDIDATES[4]
+
+    def test_selection_still_returns_full_path(self):
+        # Truncated display must not affect the returned value
+        selected, _ = self._simulate("\r", size=(40, 8))
+        assert selected == self.LONG_CANDIDATES[0]
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,9 @@ Renders an fzf-style interface in the terminal:
 Keys:
     typing      – refine the query
     ↑ / ↓       – move the selection cursor
-    Enter       – accept the highlighted item
+    Tab         – toggle mark on the current item and move down
+    Shift-Tab   – toggle mark on the current item and move up
+    Enter       – accept the marked items (or the highlighted one if none)
     Escape      – cancel and return to the watcher
 """
 
@@ -57,7 +59,8 @@ class PickerState:
     results: List[str] = field(default_factory=list)
     total: int = 0  # total candidates before filtering
     done: bool = False
-    selected: Optional[str] = None  # the accepted result (None = cancelled)
+    selected: Optional[List[str]] = None  # accepted results (None = cancelled)
+    marked: List[str] = field(default_factory=list)  # Tab-marked items (by value)
     max_visible: int = MAX_VISIBLE_RESULTS  # result rows that fit the terminal
 
 
@@ -68,6 +71,8 @@ KEY_ESCAPE = "escape"
 KEY_BACKSPACE = "backspace"
 KEY_UP = "up"
 KEY_DOWN = "down"
+KEY_TAB = "tab"
+KEY_SHIFT_TAB = "shift_tab"
 KEY_CHAR = "char"  # regular printable character
 
 
@@ -111,7 +116,8 @@ def _read_key_event(read_char: Callable[[], Optional[str]]) -> Optional[KeyEvent
     """Read one logical key event using *read_char* (a single-char reader).
 
     Handles multi-byte escape sequences for arrow keys in both normal
-    mode (``ESC [ A/B``) and application mode (``ESC O A/B``).
+    mode (``ESC [ A/B``) and application mode (``ESC O A/B``), plus
+    Shift-Tab (``ESC [ Z``).
     Tolerates ``None`` gaps between bytes (see :func:`_read_continuation`).
     """
     ch = read_char()
@@ -125,6 +131,8 @@ def _read_key_event(read_char: Callable[[], Optional[str]]) -> Optional[KeyEvent
             arrow = _parse_arrow(seq2)
             if arrow is not None:
                 return arrow
+            if seq1 == "[" and seq2 == "Z":  # Shift-Tab
+                return KeyEvent(KEY_SHIFT_TAB)
         if seq1 is None:
             # No follow-up byte at all → genuine Escape press
             return KeyEvent(KEY_ESCAPE)
@@ -133,6 +141,9 @@ def _read_key_event(read_char: Callable[[], Optional[str]]) -> Optional[KeyEvent
 
     if ch in ("\n", "\r"):
         return KeyEvent(KEY_ENTER)
+
+    if ch == "\t":
+        return KeyEvent(KEY_TAB)
 
     if ch in ("\x7f", "\x08"):  # DEL / Backspace
         return KeyEvent(KEY_BACKSPACE)
@@ -176,18 +187,21 @@ def render(state: PickerState, width: int = 80) -> str:
     lines.append(f"{_BOLD}{_CYAN}Filter >{_RESET} {query}")
 
     # Match count
-    counts = _truncate(f"  {len(state.results)}/{state.total} matches", max_cols)
-    lines.append(f"{_CYAN}{counts}{_RESET}")
+    counts = f"  {len(state.results)}/{state.total} matches"
+    if state.marked:
+        counts += f" ({len(state.marked)} selected)"
+    lines.append(f"{_CYAN}{_truncate(counts, max_cols)}{_RESET}")
 
-    # Result rows
+    # Result rows: 4-column prefix = cursor marker + mark indicator
     visible = state.results[: state.max_visible]
-    item_budget = max_cols - 4  # 4-column prefix: "  ❯ " / "    "
+    item_budget = max_cols - 4  # 4-column prefix: "❯ ● " / "  ● " / "    "
     for i, item in enumerate(visible):
+        mark = "●" if item in state.marked else " "
         item = _truncate(item, max(1, item_budget))
         if i == state.cursor:
-            lines.append(f"  {_REVERSE}{_BOLD}❯ {item}{_RESET}")
+            lines.append(f"{_REVERSE}{_BOLD}❯ {mark} {item}{_RESET}")
         else:
-            lines.append(f"    {item}")
+            lines.append(f"  {_CYAN}{mark}{_RESET} {item}")
 
     if not visible:
         lines.append(f"{_CYAN}{_truncate('  (no matches)', max_cols)}{_RESET}")
@@ -216,10 +230,29 @@ def update_state(
 
     if event.kind == KEY_ENTER:
         state.done = True
-        if state.results and 0 <= state.cursor < len(state.results):
-            state.selected = state.results[state.cursor]
+        if state.marked:
+            # Marked items win, in candidates order; marks on items that no
+            # longer match the query are still honoured (fzf behaviour).
+            state.selected = [c for c in candidates if c in state.marked]
+        elif state.results and 0 <= state.cursor < len(state.results):
+            state.selected = [state.results[state.cursor]]
         else:
             state.selected = None
+        return
+
+    if event.kind in (KEY_TAB, KEY_SHIFT_TAB):
+        if not (state.results and 0 <= state.cursor < len(state.results)):
+            return
+        item = state.results[state.cursor]
+        if item in state.marked:
+            state.marked.remove(item)
+        else:
+            state.marked.append(item)
+        if event.kind == KEY_TAB:
+            limit = min(len(state.results), state.max_visible) - 1
+            state.cursor = min(limit, state.cursor + 1)
+        else:
+            state.cursor = max(0, state.cursor - 1)
         return
 
     if event.kind == KEY_BACKSPACE:
@@ -278,8 +311,11 @@ def run_picker(
     _read_char: Optional[Callable[[], Optional[str]]] = None,
     _write: Optional[Callable[[str], None]] = None,
     _get_size: Optional[Callable[[], Tuple[int, int]]] = None,
-) -> Optional[str]:
-    """Run the interactive picker and return the selected path, or ``None``.
+) -> Optional[List[str]]:
+    """Run the interactive picker and return the selected paths, or ``None``.
+
+    Tab / Shift-Tab mark multiple items; Enter returns the marked items, or
+    the item under the cursor when nothing is marked.  Escape returns ``None``.
 
     *_read_char*, *_write* and *_get_size* are injectable for testing; when
     ``None`` they default to reading from ``sys.stdin`` (in cbreak mode),

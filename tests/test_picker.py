@@ -10,6 +10,8 @@ from pytest_watcher.picker import (
     KEY_DOWN,
     KEY_ENTER,
     KEY_ESCAPE,
+    KEY_SHIFT_TAB,
+    KEY_TAB,
     KEY_UP,
     MAX_VISIBLE_RESULTS,
     KeyEvent,
@@ -166,6 +168,20 @@ class TestReadKeyEvent:
         ev = _read_key_event(reader)
         assert ev == KeyEvent(KEY_UP)
 
+    def test_tab(self):
+        ev = _read_key_event(_make_char_reader("\t"))
+        assert ev == KeyEvent(KEY_TAB)
+
+    def test_shift_tab(self):
+        # Shift-Tab arrives as ESC [ Z — must not be read as Escape
+        ev = _read_key_event(_make_char_reader("\x1b[Z"))
+        assert ev == KeyEvent(KEY_SHIFT_TAB)
+
+    def test_shift_tab_with_none_gaps(self):
+        reader = _make_gapped_reader(["\x1b", None, "[", None, "Z"])
+        ev = _read_key_event(reader)
+        assert ev == KeyEvent(KEY_SHIFT_TAB)
+
 
 # ---------------------------------------------------------------------------
 # update_state
@@ -236,7 +252,7 @@ class TestUpdateState:
         state.cursor = 2
         update_state(state, KeyEvent(KEY_ENTER), _identity_filter, CANDIDATES)
         assert state.done is True
-        assert state.selected == CANDIDATES[2]
+        assert state.selected == [CANDIDATES[2]]
 
     def test_enter_with_no_results(self):
         state = PickerState(results=[], total=0)
@@ -269,6 +285,81 @@ class TestUpdateState:
         for _ in range(50):
             update_state(state, KeyEvent(KEY_DOWN), _identity_filter, CANDIDATES)
         assert state.cursor == 2
+
+    def test_tab_marks_and_moves_down(self):
+        state = self._new_state()
+        update_state(state, KeyEvent(KEY_TAB), _identity_filter, CANDIDATES)
+        assert state.marked == [CANDIDATES[0]]
+        assert state.cursor == 1
+
+    def test_tab_again_unmarks(self):
+        state = self._new_state()
+        update_state(state, KeyEvent(KEY_TAB), _identity_filter, CANDIDATES)
+        update_state(state, KeyEvent(KEY_UP), _identity_filter, CANDIDATES)
+        update_state(state, KeyEvent(KEY_TAB), _identity_filter, CANDIDATES)
+        assert state.marked == []
+
+    def test_tab_clamps_cursor_at_bottom(self):
+        state = self._new_state()
+        state.max_visible = 3
+        for _ in range(10):
+            update_state(state, KeyEvent(KEY_TAB), _identity_filter, CANDIDATES)
+        assert state.cursor == 2
+
+    def test_shift_tab_marks_and_moves_up(self):
+        state = self._new_state()
+        state.cursor = 2
+        update_state(state, KeyEvent(KEY_SHIFT_TAB), _identity_filter, CANDIDATES)
+        assert state.marked == [CANDIDATES[2]]
+        assert state.cursor == 1
+
+    def test_shift_tab_clamps_cursor_at_zero(self):
+        state = self._new_state()
+        update_state(state, KeyEvent(KEY_SHIFT_TAB), _identity_filter, CANDIDATES)
+        assert state.cursor == 0
+
+    def test_tab_with_no_results_is_noop(self):
+        state = PickerState(results=[], total=0)
+        update_state(state, KeyEvent(KEY_TAB), _identity_filter, [])
+        assert state.marked == []
+        assert state.cursor == 0
+
+    def test_marks_persist_across_query_change(self):
+        state = self._new_state()
+        update_state(state, KeyEvent(KEY_TAB), _identity_filter, CANDIDATES)
+        update_state(state, KeyEvent(KEY_CHAR, "z"), _identity_filter, CANDIDATES)
+        assert state.marked == [CANDIDATES[0]]
+        update_state(state, KeyEvent(KEY_BACKSPACE), _identity_filter, CANDIDATES)
+        assert state.marked == [CANDIDATES[0]]
+
+    def test_enter_returns_marked_items_in_candidates_order(self):
+        state = self._new_state()
+        state.marked = [CANDIDATES[3], CANDIDATES[1]]  # marked out of order
+        update_state(state, KeyEvent(KEY_ENTER), _identity_filter, CANDIDATES)
+        assert state.done is True
+        assert state.selected == [CANDIDATES[1], CANDIDATES[3]]
+
+    def test_enter_with_marks_ignores_cursor(self):
+        state = self._new_state()
+        state.marked = [CANDIDATES[0]]
+        state.cursor = 2
+        update_state(state, KeyEvent(KEY_ENTER), _identity_filter, CANDIDATES)
+        assert state.selected == [CANDIDATES[0]]
+
+    def test_enter_returns_marks_hidden_by_query(self):
+        # A marked item filtered out by the current query is still returned
+        state = self._new_state()
+        state.marked = [CANDIDATES[0]]
+        state.results = [CANDIDATES[4]]
+        update_state(state, KeyEvent(KEY_ENTER), _identity_filter, CANDIDATES)
+        assert state.selected == [CANDIDATES[0]]
+
+    def test_escape_cancels_even_with_marks(self):
+        state = self._new_state()
+        state.marked = [CANDIDATES[0], CANDIDATES[1]]
+        update_state(state, KeyEvent(KEY_ESCAPE), _identity_filter, CANDIDATES)
+        assert state.done is True
+        assert state.selected is None
 
 
 # ---------------------------------------------------------------------------
@@ -347,6 +438,36 @@ class TestRender:
         assert "TAIL" in first_line
         assert len(_visible(first_line)) <= 39
 
+    def test_marked_rows_show_indicator(self):
+        state = PickerState(results=["a.py", "b.py", "c.py"], total=3, marked=["b.py"])
+        output = render(state)
+        marked_lines = [line for line in output.splitlines() if "●" in line]
+        assert len(marked_lines) == 1
+        assert "b.py" in marked_lines[0]
+
+    def test_marked_cursor_row_shows_indicator(self):
+        state = PickerState(results=["a.py"], total=1, cursor=0, marked=["a.py"])
+        output = render(state)
+        cursor_line = [line for line in output.splitlines() if "❯" in line][0]
+        assert "●" in cursor_line
+
+    def test_header_shows_selected_count(self):
+        state = PickerState(results=["a.py", "b.py"], total=2, marked=["a.py", "b.py"])
+        output = render(state)
+        assert "(2 selected)" in output
+
+    def test_header_hides_selected_count_when_none(self):
+        state = PickerState(results=["a.py"], total=1)
+        output = render(state)
+        assert "selected" not in output
+
+    def test_marked_rows_truncate_within_width(self):
+        long_path = "tests/integration/handlers/test_very_long_name.py"
+        state = PickerState(results=[long_path], total=1, marked=[long_path])
+        output = render(state, width=40)
+        for line in output.splitlines():
+            assert len(_visible(line)) <= 39
+
     def test_cursor_row_highlighted_after_truncation(self):
         long_paths = ["tests/integration/handlers/test_very_long_name.py"]
         state = PickerState(results=long_paths, total=1, cursor=0)
@@ -384,25 +505,25 @@ class TestRunPicker:
 
     def test_immediate_enter_selects_first(self):
         selected, _ = self._simulate("\r")
-        assert selected == CANDIDATES[0]
+        assert selected == [CANDIDATES[0]]
 
     def test_arrow_down_then_enter(self):
         selected, _ = self._simulate("\x1b[B\r")  # ↓ Enter
-        assert selected == CANDIDATES[1]
+        assert selected == [CANDIDATES[1]]
 
     def test_arrow_down_down_up_enter(self):
         selected, _ = self._simulate("\x1b[B\x1b[B\x1b[A\r")  # ↓↓↑ Enter
-        assert selected == CANDIDATES[1]
+        assert selected == [CANDIDATES[1]]
 
     def test_type_query_then_enter(self):
         # Typing "auth" should filter to just test_auth.py
         selected, _ = self._simulate("auth\r")
-        assert selected == "tests/test_auth.py"
+        assert selected == ["tests/test_auth.py"]
 
     def test_type_query_backspace_then_enter(self):
         # Type "authx", backspace, then enter
         selected, _ = self._simulate("authx\x7f\r")
-        assert selected == "tests/test_auth.py"
+        assert selected == ["tests/test_auth.py"]
 
     def test_escape_cancels(self):
         selected, _ = self._simulate("\x1b")
@@ -429,12 +550,36 @@ class TestRunPicker:
         # Press down 20 times, then enter — should select the last item
         downs = "\x1b[B" * 20
         selected, _ = self._simulate(f"{downs}\r")
-        assert selected == CANDIDATES[-1]
+        assert selected == [CANDIDATES[-1]]
 
     def test_navigate_past_top_stays_at_zero(self):
         ups = "\x1b[A" * 5
         selected, _ = self._simulate(f"{ups}\r")
-        assert selected == CANDIDATES[0]
+        assert selected == [CANDIDATES[0]]
+
+    def test_tab_selects_multiple(self):
+        selected, _ = self._simulate("\t\t\r")
+        assert selected == [CANDIDATES[0], CANDIDATES[1]]
+
+    def test_tab_then_shift_tab_untoggles(self):
+        # Tab marks item 0 and moves to item 1; Shift-Tab marks item 1 and
+        # moves back to item 0; Tab again unmarks item 0 → only item 1 left
+        selected, _ = self._simulate("\t\x1b[Z\t\r")
+        assert selected == [CANDIDATES[1]]
+
+    def test_tab_marks_survive_filtering(self):
+        # Mark the first item, then type a query that hides it — Enter must
+        # still return the marked item together with the now-highlighted one
+        selected, _ = self._simulate("\tcache\t\r")
+        assert selected == [CANDIDATES[0], CANDIDATES[1]]
+
+    def test_escape_discards_marks(self):
+        selected, _ = self._simulate("\t\t\x1b")
+        assert selected is None
+
+    def test_output_shows_selected_count(self):
+        _, output = self._simulate("\t\r")
+        assert "(1 selected)" in output
 
 
 # ---------------------------------------------------------------------------
@@ -483,12 +628,12 @@ class TestRunPickerSmallTerminal:
         # 8-row terminal shows 5 rows; pressing down 10 times must select row 4
         downs = "\x1b[B" * 10
         selected, _ = self._simulate(f"{downs}\r", size=(40, 8))
-        assert selected == self.LONG_CANDIDATES[4]
+        assert selected == [self.LONG_CANDIDATES[4]]
 
     def test_selection_still_returns_full_path(self):
         # Truncated display must not affect the returned value
         selected, _ = self._simulate("\r", size=(40, 8))
-        assert selected == self.LONG_CANDIDATES[0]
+        assert selected == [self.LONG_CANDIDATES[0]]
 
 
 # ---------------------------------------------------------------------------
@@ -523,7 +668,7 @@ class TestRunPickerGappedReads:
         """Down arrow with None gaps, then Enter — must select second item."""
         tokens: list[Optional[str]] = ["\x1b", None, "[", None, "B", "\r"]
         selected, _ = self._simulate_gapped(tokens)
-        assert selected == CANDIDATES[1]
+        assert selected == [CANDIDATES[1]]
 
     def test_two_downs_gapped_then_enter(self):
         tokens: list[Optional[str]] = [
@@ -538,7 +683,7 @@ class TestRunPickerGappedReads:
             "\r",
         ]
         selected, _ = self._simulate_gapped(tokens)
-        assert selected == CANDIDATES[2]
+        assert selected == [CANDIDATES[2]]
 
     def test_down_up_gapped_then_enter(self):
         tokens: list[Optional[str]] = [
@@ -553,7 +698,7 @@ class TestRunPickerGappedReads:
             "\r",
         ]
         selected, _ = self._simulate_gapped(tokens)
-        assert selected == CANDIDATES[0]
+        assert selected == [CANDIDATES[0]]
 
     def test_application_mode_arrows_gapped(self):
         tokens: list[Optional[str]] = [
@@ -569,7 +714,7 @@ class TestRunPickerGappedReads:
             "\r",
         ]
         selected, _ = self._simulate_gapped(tokens)
-        assert selected == CANDIDATES[2]
+        assert selected == [CANDIDATES[2]]
 
     def test_type_then_gapped_arrow_then_enter(self):
         """Type a query to filter, then navigate with gapped arrows."""
@@ -671,7 +816,7 @@ class TestMakeRawReader:
                 _read_char=reader,
                 _write=lambda s: output_buf.append(s),
             )
-            assert selected == CANDIDATES[2]
+            assert selected == [CANDIDATES[2]]
         finally:
             os.close(r_fd)
             os.close(w_fd)

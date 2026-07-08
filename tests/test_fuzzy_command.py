@@ -53,7 +53,7 @@ class TestFuzzyFilterCommand:
         (tmp_path / "test_foo.py").write_text("")
         (tmp_path / "test_bar.py").write_text("")
 
-        with patch("pytest_watcher.picker.run_picker", return_value="test_foo.py"):
+        with patch("pytest_watcher.picker.run_picker", return_value=["test_foo.py"]):
             command.run(trigger, mock_terminal, config)
 
         assert "test_foo.py" in config.runner_args
@@ -82,10 +82,25 @@ class TestFuzzyFilterCommand:
 
         config.runner_args = ["-v", "test_old.py"]
 
-        with patch("pytest_watcher.picker.run_picker", return_value="test_alpha.py"):
+        with patch("pytest_watcher.picker.run_picker", return_value=["test_alpha.py"]):
             command.run(trigger, mock_terminal, config)
 
         assert config.runner_args == ["-v", "test_alpha.py"]
+
+    def test_selecting_multiple_files_sets_runner_args(
+        self, command, trigger, config, mock_terminal, tmp_path
+    ):
+        (tmp_path / "test_foo.py").write_text("")
+        (tmp_path / "test_bar.py").write_text("")
+
+        with patch(
+            "pytest_watcher.picker.run_picker",
+            return_value=["test_bar.py", "test_foo.py"],
+        ):
+            command.run(trigger, mock_terminal, config)
+
+        assert config.runner_args == ["-v", "--tb=short", "test_bar.py", "test_foo.py"]
+        assert trigger.is_active()
 
     def test_command_metadata(self):
         assert FuzzyFilterCommand.character == "t"
@@ -96,7 +111,7 @@ class TestFuzzyFilterCommand:
     ):
         (tmp_path / "test_one.py").write_text("")
 
-        with patch("pytest_watcher.picker.run_picker", return_value="test_one.py"):
+        with patch("pytest_watcher.picker.run_picker", return_value=["test_one.py"]):
             command.run(trigger, mock_terminal, config)
 
         # clear() should be called at least twice (before picker, after picker)

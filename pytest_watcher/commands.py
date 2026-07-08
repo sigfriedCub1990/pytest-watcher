@@ -192,10 +192,10 @@ class FuzzyFilterCommand(Command):
             term.print_short_menu(config.runner_args)
             return
 
-        # Replace runner args with the selected file, preserving any flags
+        # Replace runner args with the selected files, preserving any flags
         flags = [a for a in config.runner_args if a.startswith("-")]
         config.runner_args.clear()
-        config.runner_args.extend(flags + [selected])
+        config.runner_args.extend(flags + selected)
 
         trigger.emit_now()
 

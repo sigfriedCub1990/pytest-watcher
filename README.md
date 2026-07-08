@@ -50,6 +50,8 @@ See also: [Differences with pytest-watch](#differences-with-pytest-watch)
 
 ## What's different in this fork
 
+![Fuzzy Finder preview](docs/_static/fuzzy_finder_preview.gif)
+
 This fork adds an **interactive fuzzy picker** for selecting which test files to run, similar to [fzf](https://github.com/junegunn/fzf).
 
 ### Fuzzy test file picker
@@ -66,14 +68,14 @@ Filter > qu
 
 Keys:
 
-| Key         | Action                                                        |
-| ----------- | ------------------------------------------------------------- |
-| typing      | Refine the query (fuzzy matching, best matches first)         |
-| `↑` / `↓`   | Move the selection cursor                                     |
-| `Tab`       | Toggle mark on the current item and move down (multi-select)  |
-| `Shift-Tab` | Toggle mark on the current item and move up                   |
-| `Enter`     | Run the marked files (or the highlighted one if none marked)  |
-| `Escape`    | Cancel and return to the watcher                              |
+| Key         | Action                                                       |
+| ----------- | ------------------------------------------------------------ |
+| typing      | Refine the query (fuzzy matching, best matches first)        |
+| `↑` / `↓`   | Move the selection cursor                                    |
+| `Tab`       | Toggle mark on the current item and move down (multi-select) |
+| `Shift-Tab` | Toggle mark on the current item and move up                  |
+| `Enter`     | Run the marked files (or the highlighted one if none marked) |
+| `Escape`    | Cancel and return to the watcher                             |
 
 On accept, the selected files replace the runner arguments (any flags you passed, such as `-x` or `--lf`, are preserved) and the tests run immediately. Subsequent file-change triggers keep running only the selected files until you pick again.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import List, Optional
 
 from watchdog import events
@@ -42,10 +43,10 @@ class EventHandler:
         if event.event_type not in self.EVENTS_WATCHED:
             return False
 
-        paths = [event.src_path]
+        paths = [os.fsdecode(event.src_path)]
         if hasattr(event, "dest_path"):
             # For file moved type events we are also interested in the destination
-            paths.append(event.dest_path)
+            paths.append(os.fsdecode(event.dest_path))
 
         return match_any_paths(
             paths,

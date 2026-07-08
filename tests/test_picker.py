@@ -483,7 +483,7 @@ class TestRender:
 
 
 class TestRunPicker:
-    def _simulate(self, keys: str) -> tuple[Optional[str], str]:
+    def _simulate(self, keys: str) -> tuple[Optional[list[str]], str]:
         """Run the picker with simulated keystrokes.
 
         Returns (selected, captured_output).
@@ -593,7 +593,9 @@ class TestRunPickerSmallTerminal:
         for i in range(20)
     ]
 
-    def _simulate(self, keys: str, size: tuple[int, int]) -> tuple[Optional[str], str]:
+    def _simulate(
+        self, keys: str, size: tuple[int, int]
+    ) -> tuple[Optional[list[str]], str]:
         output_buf: list[str] = []
 
         def write(s: str) -> None:
@@ -649,7 +651,7 @@ class TestRunPickerGappedReads:
 
     def _simulate_gapped(
         self, tokens: Sequence[Optional[str]]
-    ) -> tuple[Optional[str], str]:
+    ) -> tuple[Optional[list[str]], str]:
         output_buf: list[str] = []
 
         def write(s: str) -> None:

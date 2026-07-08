@@ -14,8 +14,11 @@ Example:
 
 ![Preview](docs/_static/preview.gif)
 
+> **Note:** This is a fork of [olzhasar/pytest-watcher](https://github.com/olzhasar/pytest-watcher). See [What's different in this fork](#whats-different-in-this-fork).
+
 ## Table of contents
 
+- [What's different in this fork](#whats-different-in-this-fork)
 - [Motivation](#motivation)
 - [File Events](#file-events)
 - [Installation](#installation)
@@ -44,6 +47,37 @@ Example:
 [pytest-watch](https://github.com/joeyespo/pytest-watch) has been around for a long time and used to address exactly this problem. Unfortunately, pytest-watch is no longer maintained and doesn't work for many users. This project provides an alternative for it.
 
 See also: [Differences with pytest-watch](#differences-with-pytest-watch)
+
+## What's different in this fork
+
+This fork adds an **interactive fuzzy picker** for selecting which test files to run, similar to [fzf](https://github.com/junegunn/fzf).
+
+### Fuzzy test file picker
+
+In interactive mode, press `t` to open the picker. It discovers test files (`test_*.py` and `*_test.py`) under the watched path and lets you narrow them down with fuzzy search:
+
+```
+Filter > qu
+  3/5 matches (2 selected)
+❯ ● tests/test_query.py
+  ● tests/test_request.py
+    tests/unit/test_sql_query.py
+```
+
+Keys:
+
+| Key         | Action                                                        |
+| ----------- | ------------------------------------------------------------- |
+| typing      | Refine the query (fuzzy matching, best matches first)         |
+| `↑` / `↓`   | Move the selection cursor                                     |
+| `Tab`       | Toggle mark on the current item and move down (multi-select)  |
+| `Shift-Tab` | Toggle mark on the current item and move up                   |
+| `Enter`     | Run the marked files (or the highlighted one if none marked)  |
+| `Escape`    | Cancel and return to the watcher                              |
+
+On accept, the selected files replace the runner arguments (any flags you passed, such as `-x` or `--lf`, are preserved) and the tests run immediately. Subsequent file-change triggers keep running only the selected files until you pick again.
+
+Like the rest of the interactive mode, the picker is currently only available on POSIX systems.
 
 ## File events
 
